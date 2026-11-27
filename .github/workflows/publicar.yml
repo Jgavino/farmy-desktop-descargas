@@ -1,0 +1,113 @@
+name: Publicar Farmy para Windows
+
+# Arma el instalador de Farmy para Windows desde src-tauri/ del repo privado Jgavino/app-saas-farmy y, si se marca
+# «publicar», lo publica como versión nueva en este repo. Las PC con Farmy lo descargan solas y lo instalan al
+# cerrar Farmy (revisan releases/latest/download/latest.json).
+#
+# Este repo es público para que la descarga no pida cuenta de GitHub y los minutos de Actions sean gratis.
+# El código no se publica: solo se lee aquí, en el equipo de Actions, para compilarlo.
+#
+# Se corre a mano: Actions › «Publicar Farmy para Windows» › Run workflow (solo quien tiene permiso de escritura).
+# Antes de publicar, sube la versión en app-saas-farmy (src-tauri/tauri.conf.json y Cargo.toml).
+#
+# Secretos (Settings › Secrets and variables › Actions):
+#   FARMY_APP_TOKEN                     token fine-grained, solo app-saas-farmy, Contents: Read-only
+#   TAURI_SIGNING_PRIVATE_KEY           contenido de farmy.key (firma de las actualizaciones)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  contraseña de esa llave
+on:
+  workflow_dispatch:
+    inputs:
+      rama:
+        description: 'Rama de app-saas-farmy'
+        default: main
+        required: true
+      publicar:
+        description: 'Publicar como versión nueva (las boticas se actualizan al cerrar Farmy)'
+        type: boolean
+        default: false
+      notas:
+        description: 'Qué cambia en esta versión (opcional)'
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publicar-farmy
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PUBLICAR: ${{ inputs.publicar }}
+      RAMA: ${{ inputs.rama }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Código de la app de escritorio (solo src-tauri, solo lectura)
+        uses: actions/checkout@v7
+        with:
+          repository: Jgavino/app-saas-farmy
+          ref: ${{ inputs.rama }}
+          token: ${{ secrets.FARMY_APP_TOKEN }}
+          path: app
+          sparse-checkout: src-tauri
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+
+      - name: Versión
+        id: version
+        shell: bash
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          v=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          echo "valor=$v" >> "$GITHUB_OUTPUT"
+          echo "Farmy $v (rama $RAMA)"
+          if [ "$PUBLICAR" = "true" ] && gh release view "v$v" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::La versión $v ya está publicada. Sube la versión en app-saas-farmy (src-tauri/tauri.conf.json y Cargo.toml) y vuelve a correr."
+            exit 1
+          fi
+
+      - name: Pruebas del generador de latest.json
+        run: node --test tools/latest-json.test.mjs
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: app/src-tauri }
+
+      - name: Instalador firmado
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx --yes @tauri-apps/cli@2.12.6 build --bundles nsis
+
+      - name: Archivos de la versión
+        shell: bash
+        env:
+          NOTAS: ${{ inputs.notas }}
+        run: node tools/latest-json.mjs app/src-tauri/target/release/bundle/nsis "${{ steps.version.outputs.valor }}" salida
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: farmy-windows-${{ steps.version.outputs.valor }}
+          path: salida/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publicar
+        if: inputs.publicar
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTAS: ${{ inputs.notas }}
+          VERSION: ${{ steps.version.outputs.valor }}
+        run: |
+          gh release create "v$VERSION" salida/* --repo "$GITHUB_REPOSITORY" --latest \
+            --title "Farmy $VERSION para Windows" \
+            --notes "${NOTAS:-Farmy $VERSION para Windows.}"
+          echo "### Farmy $VERSION publicada" >> "$GITHUB_STEP_SUMMARY"
+          echo "Descarga: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/Farmy-Windows.exe" >> "$GITHUB_STEP_SUMMARY"
