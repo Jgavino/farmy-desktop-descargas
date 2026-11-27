@@ -14,7 +14,7 @@ Este repositorio solo guarda los instaladores (en *Releases*). El código de Far
 
 1. En `app-saas-farmy`, sube la versión en `src-tauri/tauri.conf.json` y `src-tauri/Cargo.toml` y haz el merge a `main`.
 2. Aquí: **Actions › Publicar Farmy para Windows › Run workflow**, con la rama `main`, **publicar** marcado y, si quieres, las notas.
-3. En unos 15 minutos queda la versión en *Releases*. Las PC con Farmy la descargan solas (revisan al minuto de abrir y cada 6 horas) y la instalan al cerrar Farmy.
+3. En unos 15 minutos queda la versión en *Releases*. Las PC con Farmy la descargan solas (revisan al minuto de abrir y cada hora) y la instalan al cerrar Farmy.
 
 Sin marcar **publicar**, solo arma el instalador para probarlo (queda como artefacto de la ejecución). Sirve para probar una rama antes del merge.
 
